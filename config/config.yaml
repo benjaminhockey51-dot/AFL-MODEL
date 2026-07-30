@@ -11,6 +11,15 @@ data:
   # project's scope has been set to the 2018 season onward.
   earliest_season: 2018
 
+  squiggle:
+    base_url: "https://api.squiggle.com.au/"
+    # Squiggle asks API consumers to identify themselves and to send no
+    # more than one request per second. contact_email is left unset here
+    # deliberately — set it in config.local.yaml (gitignored) rather than
+    # committing personal contact info to a public repo.
+    min_request_interval_seconds: 1.1
+    contact_email: null
+
 logging:
   config_path: "config/logging.yaml"
 
