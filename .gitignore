@@ -1,0 +1,26 @@
+# Python
+__pycache__/
+*.pyc
+.venv/
+*.egg-info/
+build/
+dist/
+
+# Data & logs (backed up separately, not versioned)
+data/raw/*
+data/staged/*
+!data/raw/.gitkeep
+!data/staged/.gitkeep
+*.db
+*.db-wal
+*.db-shm
+logs/*.log
+
+# Env / secrets
+.env
+*.local.yaml
+
+# Editor / OS
+.DS_Store
+.vscode/
+.idea/

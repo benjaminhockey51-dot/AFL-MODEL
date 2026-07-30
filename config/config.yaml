@@ -1,0 +1,27 @@
+# Central configuration for the AFL prediction model.
+# Values here are the tunable knobs referenced throughout src/afl_model —
+# nothing rating- or threshold-related should be hardcoded in code.
+
+database:
+  path: "data/afl.db"
+
+data:
+  # Earliest season ingested. Chosen deliberately: earlier AFL Tables data
+  # is real but stats coverage is inconsistent before this point, and the
+  # project's scope has been set to the 2018 season onward.
+  earliest_season: 2018
+
+logging:
+  config_path: "config/logging.yaml"
+
+# Placeholders for future stages — filled in as each stage is built,
+# never invented ahead of the code that uses them.
+ratings:
+  elo: {}
+  attack_defence: {}
+  form: {}
+  adjustments: {}
+
+betting:
+  odds_source: null # decided at Stage 6
+  min_edge_threshold: null # derived from backtest calibration, not guessed

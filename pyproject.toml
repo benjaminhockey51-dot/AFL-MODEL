@@ -1,0 +1,33 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "afl-model"
+version = "0.1.0"
+description = "AFL match prediction and betting-value analysis engine"
+requires-python = ">=3.9"
+readme = "README.md"
+dependencies = [
+    "SQLAlchemy>=2.0,<3.0",
+    "alembic>=1.13,<2.0",
+    "PyYAML>=6.0,<7.0",
+    "typer>=0.12,<1.0",
+    "python-dateutil>=2.9,<3.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0,<9.0",
+    "pytest-cov>=5.0,<6.0",
+]
+
+[project.scripts]
+afl-model = "afl_model.cli:app"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
