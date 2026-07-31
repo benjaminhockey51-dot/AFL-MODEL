@@ -23,6 +23,13 @@ KNOWN_VENUE_DUPLICATES: List[Tuple[str, str, str]] = [
     ("GMHBA Stadium", "kardinia_park", "Kardinia Park, Geelong — sponsor rename"),
     ("Optus Stadium", "perth", "Perth Stadium — sponsor rename"),
     ("Mars Stadium", "eureka", "Eureka Stadium, Ballarat — sponsor rename"),
+    ("Adelaide Arena at Jiangwan Stadium", "jiangwan",
+     "Jiangwan Stadium, Shanghai — Port Adelaide's China games (a well-documented "
+     "annual AFL fixture). Confirmed indirectly: the Squiggle-only venue row this "
+     "alias pointed to had zero matches left referencing it once AFL Tables' "
+     "ingestion ran for the same season and resolved the same games to 'jiangwan' "
+     "instead — i.e. it's a leftover duplicate of the same real match, not a "
+     "distinct venue"),
     ("UNSW Canberra Oval", "manuka_oval", "Manuka Oval, Canberra — sponsor rename; "
      "confirmed via GWS v Western Bulldogs, 2018-03-25"),
     ("University of Tasmania Stadium", "york_park", "York Park, Launceston — sponsor rename; "

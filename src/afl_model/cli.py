@@ -103,6 +103,31 @@ def reconcile_venues() -> None:
 
 
 @app.command()
+def seed_locations() -> None:
+    """Populate team home cities and venue coordinates (idempotent)."""
+    from afl_model.ratings.geo_reference import seed_team_home_locations, seed_venue_coordinates
+
+    teams_updated = seed_team_home_locations()
+    venues_updated = seed_venue_coordinates()
+    typer.echo(f"Updated {teams_updated} team(s), {venues_updated} venue(s) with location data.")
+
+
+@app.command()
+def run_ratings(
+    version_name: str = typer.Option(None, "--version-name", help="Name for this rating run (auto-generated if omitted)"),
+    notes: str = typer.Option(None, "--notes", help="Optional free-text notes for this run"),
+) -> None:
+    """Run the Elo/attack-defence/form ratings engine over all completed matches."""
+    from afl_model.ratings.engine import run_ratings_engine
+
+    summary = run_ratings_engine(version_name=version_name, notes=notes)
+    typer.echo(
+        f"'{summary.version_name}': {summary.matches_processed} matches processed, "
+        f"{summary.teams_seen} teams, final league avg score {summary.final_league_avg_score:.1f}."
+    )
+
+
+@app.command()
 def predict(round_number: int = typer.Argument(..., help="Round number to predict")) -> None:
     """Predict every match in a given round. (Not yet implemented — arrives in Stage 5.)"""
     typer.echo(

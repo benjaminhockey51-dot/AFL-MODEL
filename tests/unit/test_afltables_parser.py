@@ -53,6 +53,26 @@ def test_parse_season_page_finals_round_numbers_match_squiggle_convention():
     assert grand_final.away_points == 74
 
 
+def test_parse_season_page_handles_missing_attendance_covid_2020():
+    # Regression test: the 2020 season had crowd-less games during COVID,
+    # and AFL Tables omits the "Att:" text entirely rather than showing
+    # "Att: 0" — the original regex required that literal text, so it
+    # silently dropped the whole match (date, venue, scores — everything)
+    # instead of just leaving attendance null.
+    html = (FIXTURES / "2020_round1_no_attendance_covid_season.html").read_text(encoding="utf-8")
+    games = parse_season_page(html, 2020)
+
+    assert len(games) == 1
+    game = games[0]
+    assert game.home_team == "Richmond"
+    assert game.away_team == "Carlton"
+    assert game.home_points == 105
+    assert game.away_points == 81
+    assert game.match_date_str == "Thu 19-Mar-2020 7:40 PM"
+    assert game.venue_slug == "mcg"
+    assert game.attendance is None
+
+
 def test_parse_match_stats_page_team_totals():
     html = (FIXTURES / "2018_round1_richmond_carlton_stats.html").read_text(encoding="utf-8")
     team_stats, _ = parse_match_stats_page(html)

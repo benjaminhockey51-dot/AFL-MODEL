@@ -30,6 +30,13 @@ class Team(Base):
     name: Mapped[str] = mapped_column(unique=True)
     abbreviation: Mapped[str] = mapped_column(unique=True)
 
+    # Home city, used by the ratings engine's travel-distance adjustment
+    # (haversine distance from here to a match's venue). City-level, not
+    # exact stadium coordinates — sufficient for a travel-burden estimate.
+    home_city: Mapped[Optional[str]] = mapped_column(default=None)
+    home_latitude: Mapped[Optional[float]] = mapped_column(default=None)
+    home_longitude: Mapped[Optional[float]] = mapped_column(default=None)
+
     aliases: Mapped[list["TeamAlias"]] = relationship(back_populates="team")
 
 

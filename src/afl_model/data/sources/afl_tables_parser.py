@@ -23,7 +23,11 @@ FINALS_ROUND_NUMBERS = {
 
 DATE_VENUE_RE = re.compile(
     r"(?P<date>\w+ \d{2}-\w{3}-\d{4})\s+(?P<time>\d{1,2}:\d{2} [AP]M)"
-    r".*?Att:\s*(?P<attendance>[\d,]+)?\s*Venue:\s*(?P<venue>.*)$",
+    # "Att: N" is entirely absent, not just zero, for the 2020 COVID season's
+    # crowd-less games — real data, discovered when the original regex (which
+    # required the literal "Att:" text) silently dropped every 2020 match
+    # with no listed attendance instead of just leaving attendance null.
+    r".*?(?:Att:\s*(?P<attendance>[\d,]+))?\s*Venue:\s*(?P<venue>.*)$",
     re.DOTALL,
 )
 SCORE_TOKEN_RE = re.compile(r"(\d+)\.(\d+)")

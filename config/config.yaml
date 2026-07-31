@@ -31,13 +31,63 @@ data:
 logging:
   config_path: "config/logging.yaml"
 
-# Placeholders for future stages — filled in as each stage is built,
-# never invented ahead of the code that uses them.
+# Rating engine parameters. These are reasonable, documented starting
+# priors (standard Elo conventions, FiveThirtyEight-style margin-of-victory
+# damping) — NOT asserted as optimal. Once Stage 7's backtesting framework
+# exists, every value here should be empirically validated, and any change
+# that reduces long-run backtested accuracy gets reverted, per the
+# project's core rule.
 ratings:
-  elo: {}
-  attack_defence: {}
-  form: {}
-  adjustments: {}
+  elo:
+    starting_rating: 1500.0
+    k_factor: 20.0
+    # Margin-of-victory multiplier (FiveThirtyEight NFL/NBA Elo style):
+    # mov_multiplier = ln(|margin| + 1) * (mov_multiplier_divisor /
+    #   (elo_diff_of_winner * mov_multiplier_scale + mov_multiplier_divisor))
+    # Amplifies upsets, damps expected blowouts, so a big win by a big
+    # favorite doesn't swing ratings as much as the same margin would for
+    # an underdog.
+    mov_multiplier_divisor: 2.2
+    mov_multiplier_scale: 0.001
+    # Elo points added to the home team's rating for win-probability
+    # purposes only (not stored as a separate per-team rating in v1 — see
+    # Stage 4 write-up for why team/venue-specific HGA was deferred).
+    home_ground_advantage: 35.0
+    # Applied once, the first time a team appears in a new season: pulls
+    # the rating partway back toward season_regression_target, since a
+    # team's true strength between seasons (list changes, etc.) regresses
+    # toward the mean more than in-season form does.
+    season_regression_factor: 0.75
+    season_regression_target: 1500.0
+
+  attack_defence:
+    # Operates in points-space, so needs its own (much smaller) k_factor
+    # than Elo's win/loss-space k_factor.
+    k_factor: 0.15
+    starting_league_avg_score: 85.0
+    # League-average scoring drifts across eras (rule changes, congestion)
+    # — tracked as a slow-moving EWMA rather than a fixed constant.
+    league_avg_score_ewma_alpha: 0.02
+
+  form:
+    # Higher alpha than Elo's effective memory — form is deliberately a
+    # more reactive, shorter-memory signal than the slow-moving Elo rating,
+    # meant to capture hot/cold streaks Elo alone would smooth over.
+    ewma_alpha: 0.25
+
+  adjustments:
+    rest:
+      # rest_adjustment is stored as signed days relative to this baseline
+      # (positive = more rest than normal, negative = short turnaround) —
+      # a raw, unscaled fact. How much it should matter to a prediction is
+      # a Stage 5 decision, not baked in here.
+      baseline_days: 6
+    travel:
+      # travel_adjustment is stored as straight-line km from a team's home
+      # city to the venue (haversine, city-level — not exact stadium
+      # coordinates). Left null when either city isn't in the reference
+      # data rather than guessed.
+      enabled: true
 
 betting:
   odds_source: null # decided at Stage 6

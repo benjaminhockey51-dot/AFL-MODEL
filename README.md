@@ -51,6 +51,27 @@ afl-model ingest-afltables 2018
 afl-model reconcile-venues
 ```
 
+## Ratings engine
+
+```bash
+# One-time: populate team home cities and venue coordinates (needed for
+# the travel-distance adjustment)
+afl-model seed-locations
+
+# Walk every completed match chronologically, computing Elo, attack/defence,
+# form, and rest/travel adjustments. Each run creates a new, independent
+# ModelVersion + TeamRatingHistory snapshot — re-running after tuning
+# config.yaml never overwrites a prior run, so different configurations
+# can be compared honestly later (Stage 7).
+afl-model run-ratings --version-name "elo-v1"
+```
+
+Rating parameters (Elo K-factor, home ground advantage, margin-of-victory damping,
+attack/defence smoothing, etc.) live in `config/config.yaml` under `ratings:` — see the
+comments there for what each one does and why the defaults are reasonable starting
+priors, not asserted-optimal values. `injury_adjustment` is deliberately left null
+throughout: it needs team-selection data this project doesn't ingest yet.
+
 ## Project layout
 
 ```
@@ -86,8 +107,8 @@ of the SQLite database and the git repository itself.
 
 1. Project scaffolding — repo, config, logging, schema
 2. Core ingestion vertical slice (Squiggle API)
-3. Historical backfill (AFL Tables, 2018 season onward) *(current stage)*
-4. Ratings engine (Elo, attack/defence, form, travel/rest/injury adjustments)
+3. Historical backfill (AFL Tables, 2018 season onward)
+4. Ratings engine (Elo, attack/defence, form, travel/rest/injury adjustments) *(current stage)*
 5. Prediction engine (winner, margin, line, total, win %, confidence)
 6. Betting integration (odds source, edge/EV, value recommendations)
 7. Backtesting framework (walk-forward validation, no lookahead)
