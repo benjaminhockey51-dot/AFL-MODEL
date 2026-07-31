@@ -128,13 +128,110 @@ def run_ratings(
 
 
 @app.command()
-def predict(round_number: int = typer.Argument(..., help="Round number to predict")) -> None:
-    """Predict every match in a given round. (Not yet implemented — arrives in Stage 5.)"""
-    typer.echo(
-        f"Prediction engine isn't built yet (Stage 5). "
-        f"Requested: Round {round_number}."
-    )
-    raise typer.Exit(code=1)
+def predict(
+    round_number: int = typer.Argument(..., help="Round number to predict"),
+    year: int = typer.Option(None, "--year", help="Season year (defaults to the most recent season in the database)"),
+    model_version: str = typer.Option(
+        None, "--model-version", help="Ratings run to predict from (defaults to the most recent)"
+    ),
+) -> None:
+    """Predict every match in a round: winner, margin, line, total, win probability, confidence.
+
+    Uses the given ratings run's *current* state, never bookmaker odds —
+    odds only enter the picture later, for comparison (Stage 6).
+    """
+    import sqlalchemy as sa
+
+    from afl_model.db.connection import get_session
+    from afl_model.db.models import Season
+    from afl_model.models.predict import predict_round
+
+    if year is None:
+        session = get_session()
+        try:
+            year = session.execute(sa.select(sa.func.max(Season.year))).scalar_one_or_none()
+        finally:
+            session.close()
+        if year is None:
+            typer.echo("No seasons in the database yet.")
+            raise typer.Exit(code=1)
+
+    try:
+        rows = predict_round(year, round_number, version_name=model_version)
+    except ValueError as e:
+        typer.echo(str(e))
+        raise typer.Exit(code=1)
+
+    typer.echo(f"\n{year} Round {round_number} predictions:\n")
+    header = f"{'Match':38} {'Winner':16} {'Margin':>8} {'Line':>7} {'Total':>7} {'Win %':>7} {'Conf':>6}"
+    typer.echo(header)
+    typer.echo("-" * len(header))
+    for row in rows:
+        matchup = f"{row.home_team} v {row.away_team}"
+        typer.echo(
+            f"{matchup:38} {row.predicted_winner:16} {row.predicted_margin:8.1f} "
+            f"{row.predicted_line:+7.1f} {row.predicted_total:7.1f} "
+            f"{row.home_win_probability * 100:6.1f}% {row.confidence:5.1f}"
+        )
+
+
+@app.command()
+def backtest(
+    model_version: str = typer.Option(None, "--model-version", help="Ratings run to evaluate (defaults to the most recent)"),
+) -> None:
+    """Walk-forward backtest: evaluate the prediction engine against every
+    completed match using only pre-match rating snapshots, with feature
+    ablations and baseline comparisons.
+    """
+    from afl_model.backtest.evaluate import run_full_backtest
+    from afl_model.db.connection import get_session
+    from afl_model.models.predict import get_model_version as _get_model_version
+
+    session = get_session()
+    try:
+        version = _get_model_version(session, model_version)
+        report = run_full_backtest(session, version.id)
+    finally:
+        session.close()
+
+    def fmt_variant(v):
+        return (f"{v.name:38} n={v.n:5} decisive={v.n_decisive:5} "
+                f"acc={v.win_accuracy:6.1%} MAE={v.margin_mae:6.2f} "
+                f"Brier={v.brier:6.4f} LogLoss={v.log_loss:6.4f}")
+
+    typer.echo(f"\nBacktest — model version '{report.model_version_name}'\n")
+    typer.echo("=== Full model ===")
+    typer.echo(fmt_variant(report.full_model))
+
+    typer.echo("\n=== Baselines ===")
+    for b in report.baselines:
+        typer.echo(fmt_variant(b))
+
+    typer.echo("\n=== Feature ablations (full model minus one feature) ===")
+    for a in report.ablations:
+        typer.echo(fmt_variant(a))
+
+    typer.echo("\n=== Calibration (predicted home win % vs actual rate) ===")
+    for bucket in report.calibration:
+        if bucket.n == 0:
+            continue
+        typer.echo(f"{bucket.label:10} n={bucket.n:5} predicted={bucket.mean_predicted_prob:6.1%} actual={bucket.actual_win_rate:6.1%}")
+
+    typer.echo("\n=== By season ===")
+    for g in sorted(report.by_season, key=lambda g: g.group):
+        typer.echo(f"{g.group:10} n={g.n:5} acc={g.accuracy:6.1%} MAE={g.margin_mae:6.2f}")
+
+    typer.echo("\n=== By predicted side ===")
+    for g in report.by_predicted_side:
+        typer.echo(f"{g.group:24} n={g.n:5} acc={g.accuracy:6.1%} MAE={g.margin_mae:6.2f}")
+
+    typer.echo("\n=== By favourite strength ===")
+    for g in sorted(report.by_favourite_strength, key=lambda g: g.group):
+        typer.echo(f"{g.group:30} n={g.n:5} acc={g.accuracy:6.1%} MAE={g.margin_mae:6.2f}")
+
+    typer.echo("\n=== By venue (n >= 20) ===")
+    for g in sorted(report.by_venue, key=lambda g: -g.n):
+        typer.echo(f"{g.group:24} n={g.n:5} acc={g.accuracy:6.1%} MAE={g.margin_mae:6.2f}")
 
 
 if __name__ == "__main__":

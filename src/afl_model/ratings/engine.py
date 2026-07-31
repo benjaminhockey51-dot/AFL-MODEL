@@ -8,12 +8,13 @@ from typing import Dict, Optional
 import sqlalchemy as sa
 
 from afl_model.db.connection import get_session
-from afl_model.db.models import Match, ModelVersion, Team, TeamRatingHistory, Venue
+from afl_model.db.models import CurrentTeamRating, Match, ModelVersion, Team, TeamRatingHistory, Venue
 from afl_model.ratings.attack_defence import update_attack_defence
 from afl_model.ratings.config import RatingsConfig, load_ratings_config
 from afl_model.ratings.elo import apply_season_regression, expected_home_win_probability, update_ratings
 from afl_model.ratings.form import update_form
 from afl_model.ratings.geo_reference import travel_distance_km
+from afl_model.ratings.rest import rest_days_adjustment
 
 logger = logging.getLogger(__name__)
 
@@ -58,12 +59,6 @@ def _apply_season_regression_if_needed(state: TeamState, season_year: int, confi
         defence=config.elo.season_regression_factor * state.defence,
         form=0.0,
     )
-
-
-def _rest_days(last_match_date: Optional[date], this_match_date: date, baseline_days: int) -> Optional[float]:
-    if last_match_date is None:
-        return None
-    return float((this_match_date - last_match_date).days - baseline_days)
 
 
 def run_ratings_engine(version_name: Optional[str] = None, notes: Optional[str] = None) -> RatingsRunSummary:
@@ -119,8 +114,8 @@ def run_ratings_engine(version_name: Optional[str] = None, notes: Optional[str] 
             away_team = teams_by_id[match.away_team_id]
             venue = venues_by_id.get(match.venue_id) if match.venue_id else None
 
-            rest_home = _rest_days(home_state.last_match_date, match.match_date, config.rest_baseline_days)
-            rest_away = _rest_days(away_state.last_match_date, match.match_date, config.rest_baseline_days)
+            rest_home = rest_days_adjustment(home_state.last_match_date, match.match_date, config.rest_baseline_days)
+            rest_away = rest_days_adjustment(away_state.last_match_date, match.match_date, config.rest_baseline_days)
 
             travel_home = travel_away = None
             if config.travel_enabled and venue is not None:
@@ -132,17 +127,21 @@ def run_ratings_engine(version_name: Optional[str] = None, notes: Optional[str] 
                 )
 
             # Snapshot BEFORE this match's result is applied — see docstring.
+            # league_avg_score here is deliberately the value as it stood
+            # going into this match, not the run's final value.
             history_rows.append(TeamRatingHistory(
                 match_id=match.id, team_id=match.home_team_id, model_version_id=model_version_id,
                 elo_rating=home_state.elo, attack_rating=home_state.attack,
                 defence_rating=home_state.defence, form_rating=home_state.form,
                 rest_adjustment=rest_home, travel_adjustment=travel_home, injury_adjustment=None,
+                league_avg_score_before=league_avg_score,
             ))
             history_rows.append(TeamRatingHistory(
                 match_id=match.id, team_id=match.away_team_id, model_version_id=model_version_id,
                 elo_rating=away_state.elo, attack_rating=away_state.attack,
                 defence_rating=away_state.defence, form_rating=away_state.form,
                 rest_adjustment=rest_away, travel_adjustment=travel_away, injury_adjustment=None,
+                league_avg_score_before=league_avg_score,
             ))
 
             expected_home = expected_home_win_probability(
@@ -173,6 +172,16 @@ def run_ratings_engine(version_name: Optional[str] = None, notes: Optional[str] 
             )
 
         session.add_all(history_rows)
+        session.add_all(
+            CurrentTeamRating(
+                team_id=team_id, model_version_id=model_version_id,
+                elo_rating=state.elo, attack_rating=state.attack,
+                defence_rating=state.defence, form_rating=state.form,
+                last_match_date=state.last_match_date, last_season=state.last_season,
+            )
+            for team_id, state in team_states.items()
+        )
+        model_version.final_league_avg_score = league_avg_score
         session.commit()
 
         summary = RatingsRunSummary(

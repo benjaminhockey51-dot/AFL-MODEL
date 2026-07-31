@@ -89,6 +89,45 @@ ratings:
       # data rather than guessed.
       enabled: true
 
+# Prediction engine: how the individual rating signals (Stage 4) combine
+# into a single win probability, margin, and total. Same caveat as
+# ratings: reasonable starting priors, not asserted-optimal — Stage 7
+# backtesting is what validates or corrects these.
+prediction:
+  # Situational adjustments (form, rest, travel) are folded into the
+  # win-probability calculation as Elo-equivalent points, added to the
+  # same effective rating difference that home_ground_advantage adjusts.
+  # Margin/total, by contrast, come purely from attack/defence ratings in
+  # v1 — extending situational adjustments to points-space too is a
+  # natural follow-up once backtesting shows the win-probability version
+  # actually helps.
+  # form_elo_scale and rest_elo_scale_per_day were both set to 0 after the
+  # 2018-2026 walk-forward backtest (afl-model backtest) showed the full
+  # model losing to its own Elo-only baseline (65.8% vs 66.9% win accuracy;
+  # worse Brier and log loss too) — leave-one-out ablation confirmed both
+  # individually hurt at their original weights (100.0 and 3.0
+  # respectively). Set to exactly 0 rather than a guessed smaller nonzero
+  # value: that's what the ablation itself already tested, and it's the
+  # only value with actual evidence behind it. The underlying form/rest
+  # ratings are still computed and stored by the ratings engine (Stage 4)
+  # for future re-tuning — only their weight in this combination is zero.
+  form_elo_scale: 0.0
+  rest_elo_scale_per_day: 0.0
+  # travel showed no clear evidence of benefit or harm (effect size small,
+  # inconsistent in direction across metrics) — left unchanged rather than
+  # guessed in either direction.
+  travel_elo_scale_per_100km: 1.5
+  # Predicted margin is rounded to this increment for predicted_line,
+  # matching standard AFL handicap-betting convention (lines are set in
+  # half-point increments so a match can't push/tie against the line).
+  # predicted_margin itself stays an unrounded float.
+  line_rounding: 0.5
+  # A team's rating is treated as "mature" (full confidence) once this
+  # many of their matches have been processed by the ratings engine —
+  # below that, confidence is scaled down since the rating is still
+  # largely at (or close to) its starting value. ~1 home-and-away season.
+  confidence_maturity_games: 22
+
 betting:
   odds_source: null # decided at Stage 6
   min_edge_threshold: null # derived from backtest calibration, not guessed

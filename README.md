@@ -72,6 +72,47 @@ comments there for what each one does and why the defaults are reasonable starti
 priors, not asserted-optimal values. `injury_adjustment` is deliberately left null
 throughout: it needs team-selection data this project doesn't ingest yet.
 
+## Prediction engine
+
+```bash
+afl-model predict 22
+```
+
+Predicts every match in a round — winner, margin, line, total, win probability, and a
+confidence rating — using a ratings run's *current* state (never bookmaker odds, which
+this has no access to at all). Defaults to the most recent season and the most recently
+computed ratings run; both are overridable with `--year` and `--model-version`. Every
+prediction is persisted (`predictions` table), keyed on `(match_id, model_version_id)`,
+so re-running is idempotent rather than duplicating rows.
+
+Win probability combines Elo with form/rest/travel as Elo-equivalent adjustments; margin
+and total come from attack/defence ratings alone (situational adjustments don't extend
+to points-space yet — see `prediction:` in `config/config.yaml`). Confidence is built
+from two measurable things, never invented: how far the win probability sits from a coin
+flip, and how many real matches back the ratings driving it — a lopsided-looking
+prediction between two barely-rated teams is *not* actually confident, and this reflects
+that.
+
+`form_elo_scale` and `rest_elo_scale_per_day` are currently **0** — a 2018-2026
+walk-forward backtest (see below) showed both hurting win accuracy, Brier score, and log
+loss at their original values, so they're disabled pending proper tuning rather than left
+at a guessed weight. Elo and attack/defence are validated, real contributors; travel's
+effect was too small and inconsistent in direction to justify changing it either way.
+
+## Backtesting
+
+```bash
+afl-model backtest --model-version "elo-v3-for-backtest"
+```
+
+Walk-forward evaluation of a ratings run against every completed match it covers, using
+only each match's stored *pre-match* snapshot (`TeamRatingHistory`) — never
+`CurrentTeamRating`, which would leak hindsight into the evaluation. Reports win
+accuracy, margin MAE, Brier score, log loss, and calibration for the full model, for two
+baselines (always-home, Elo-only), and for a leave-one-out ablation of each of the six
+Stage 4 rating signals — this is what justified disabling form/rest above, and what
+should be re-run after any future rating or prediction-config change before trusting it.
+
 ## Project layout
 
 ```
@@ -108,10 +149,13 @@ of the SQLite database and the git repository itself.
 1. Project scaffolding — repo, config, logging, schema
 2. Core ingestion vertical slice (Squiggle API)
 3. Historical backfill (AFL Tables, 2018 season onward)
-4. Ratings engine (Elo, attack/defence, form, travel/rest/injury adjustments) *(current stage)*
-5. Prediction engine (winner, margin, line, total, win %, confidence)
-6. Betting integration (odds source, edge/EV, value recommendations)
-7. Backtesting framework (walk-forward validation, no lookahead)
+4. Ratings engine (Elo, attack/defence, form, travel/rest/injury adjustments)
+5. Prediction engine (winner, margin, line, total, win %, confidence) — validated against
+   a full 2018-2026 walk-forward backtest before being finalized
+6. Betting integration (odds source, edge/EV, value recommendations) *(current stage)*
+7. Backtesting framework (walk-forward validation, no lookahead) — core engine
+   (`afl_model.backtest`) already built to validate Stage 5; ROI-vs-closing-line and a
+   proper tuning workflow are still to come once Stage 6 provides odds
 8. Performance tracking + reporting/CLI (`afl-model predict <round>`)
 9. Automation (scheduled auto-update after each completed round)
 10. Future extensions — player disposals, Brownlow modelling, Same Game Multi,

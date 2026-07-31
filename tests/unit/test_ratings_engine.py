@@ -5,7 +5,15 @@ from datetime import date, timedelta
 import pytest
 import sqlalchemy as sa
 
-from afl_model.db.models import Match, ModelVersion, Season, Team, TeamRatingHistory, Venue
+from afl_model.db.models import (
+    CurrentTeamRating,
+    Match,
+    ModelVersion,
+    Season,
+    Team,
+    TeamRatingHistory,
+    Venue,
+)
 from afl_model.ratings.engine import run_ratings_engine
 from afl_model.ratings.geo_reference import haversine_km
 
@@ -195,3 +203,78 @@ def test_creates_a_new_model_version_each_run(two_teams):
         sa.select(sa.func.count()).select_from(TeamRatingHistory)
     ).scalar_one()
     assert total_history_rows == 4  # 2 teams x 1 match x 2 independent runs
+
+
+def test_current_team_rating_reflects_post_match_state_not_pre_match(two_teams):
+    session, richmond, adelaide, venue = two_teams
+    _make_match(session, 2018, date(2018, 3, 22), richmond, adelaide, 120, 60, venue)
+    session.commit()
+
+    run_ratings_engine(version_name="test-current-state")
+    model_version = session.execute(
+        sa.select(ModelVersion).where(ModelVersion.name == "test-current-state")
+    ).scalar_one()
+
+    pre_match_row = session.execute(
+        sa.select(TeamRatingHistory).where(
+            TeamRatingHistory.team_id == richmond.id,
+            TeamRatingHistory.model_version_id == model_version.id,
+        )
+    ).scalar_one()
+    current_row = session.execute(
+        sa.select(CurrentTeamRating).where(
+            CurrentTeamRating.team_id == richmond.id,
+            CurrentTeamRating.model_version_id == model_version.id,
+        )
+    ).scalar_one()
+
+    # Pre-match snapshot is the starting rating (1500) — current state must
+    # already reflect Richmond's big win, i.e. be higher, not identical.
+    assert pre_match_row.elo_rating == pytest.approx(1500.0)
+    assert current_row.elo_rating > pre_match_row.elo_rating
+    assert current_row.last_match_date == date(2018, 3, 22)
+    assert current_row.last_season == 2018
+
+
+def test_current_team_rating_is_one_row_per_team_per_run(two_teams):
+    session, richmond, adelaide, venue = two_teams
+    for i in range(3):
+        _make_match(session, 2018, date(2018, 3, 22) + timedelta(weeks=i), richmond, adelaide, 100, 90, venue)
+    session.commit()
+
+    run_ratings_engine(version_name="test-current-state-2")
+
+    count = session.execute(
+        sa.select(sa.func.count()).select_from(CurrentTeamRating)
+    ).scalar_one()
+    assert count == 2  # one row per team, not one per match
+
+
+def test_league_avg_score_before_reflects_pre_match_state_not_final(two_teams):
+    session, richmond, adelaide, venue = two_teams
+    # Very high-scoring games should drag the league average up over time.
+    for i in range(5):
+        _make_match(session, 2018, date(2018, 3, 22) + timedelta(weeks=i), richmond, adelaide, 200, 200, venue)
+    session.commit()
+
+    run_ratings_engine(version_name="test-league-avg")
+    model_version = session.execute(
+        sa.select(ModelVersion).where(ModelVersion.name == "test-league-avg")
+    ).scalar_one()
+
+    rows = session.execute(
+        sa.select(TeamRatingHistory)
+        .join(Match, TeamRatingHistory.match_id == Match.id)
+        .where(TeamRatingHistory.team_id == richmond.id, TeamRatingHistory.model_version_id == model_version.id)
+        .order_by(Match.match_date)
+    ).scalars().all()
+
+    # First match: nothing has happened yet, so the pre-match average must
+    # still be the config starting value, not dragged up by the 200-point
+    # games that come later in the dataset.
+    assert rows[0].league_avg_score_before == pytest.approx(85.0)
+    # By the last match, the average should have climbed — but the value
+    # attached to *this* match must be from before it, i.e. strictly less
+    # than the run's final value (which includes this match's own update).
+    assert rows[-1].league_avg_score_before > rows[0].league_avg_score_before
+    assert rows[-1].league_avg_score_before < model_version.final_league_avg_score
