@@ -292,5 +292,65 @@ def assess_value(
         )
 
 
+@app.command()
+def tune() -> None:
+    """Systematic hyperparameter search (Stage 7): grid search over rating
+    and prediction-combination parameters, scored on validation seasons
+    only, then evaluated exactly once on a held-out test period.
+
+    Prints the frozen configuration and both validation (seen during
+    search) and test (never touched until this point) metrics. Does NOT
+    write to config.yaml — review the result, then apply it deliberately.
+    """
+    from afl_model.db.connection import get_session
+    from afl_model.tuning.search import run_full_search
+
+    session = get_session()
+    try:
+        result = run_full_search(session)
+    finally:
+        session.close()
+
+    def fmt_top(candidates, key, n=5):
+        return sorted(candidates, key=key)[:n]
+
+    typer.echo("=== Stage A: win-probability search (scored by log loss, validation seasons) ===")
+    typer.echo(f"Combinations evaluated: {len(result.win_probability_candidates)}")
+    typer.echo("\nTop 5:")
+    for c in fmt_top(result.win_probability_candidates, lambda c: c.log_loss):
+        typer.echo(
+            f"  k={c.k_factor:5.1f} hga={c.home_ground_advantage:5.1f} regress={c.season_regression_factor:.2f} "
+            f"form={c.form_elo_scale:5.1f} rest={c.rest_elo_scale_per_day:.1f} travel={c.travel_elo_scale_per_100km:.1f} "
+            f"-> logloss={c.log_loss:.4f} brier={c.brier:.4f} acc={c.accuracy:.1%}"
+        )
+
+    typer.echo("\n=== Stage B: margin search (scored by MAE, validation seasons) ===")
+    typer.echo(f"Combinations evaluated: {len(result.margin_candidates)}")
+    typer.echo("\nTop 5:")
+    for c in fmt_top(result.margin_candidates, lambda c: c.margin_mae):
+        typer.echo(f"  ad_k={c.attack_defence_k_factor:.2f} league_avg_alpha={c.league_avg_score_ewma_alpha:.2f} -> MAE={c.margin_mae:.2f}")
+
+    typer.echo("\n=== Frozen configuration ===")
+    e = result.frozen_ratings_config.elo
+    ad = result.frozen_ratings_config.attack_defence
+    p = result.frozen_prediction_config
+    typer.echo(f"elo.k_factor = {e.k_factor}")
+    typer.echo(f"elo.home_ground_advantage = {e.home_ground_advantage}")
+    typer.echo(f"elo.season_regression_factor = {e.season_regression_factor}")
+    typer.echo(f"attack_defence.k_factor = {ad.k_factor}")
+    typer.echo(f"attack_defence.league_avg_score_ewma_alpha = {ad.league_avg_score_ewma_alpha}")
+    typer.echo(f"prediction.form_elo_scale = {p.form_elo_scale}")
+    typer.echo(f"prediction.rest_elo_scale_per_day = {p.rest_elo_scale_per_day}")
+    typer.echo(f"prediction.travel_elo_scale_per_100km = {p.travel_elo_scale_per_100km}")
+
+    typer.echo("\n=== Validation seasons (seen during search — reference only) ===")
+    v, vm = result.validation_win_probability, result.validation_margin
+    typer.echo(f"n={v['n']:.0f} acc={v['accuracy']:.1%} brier={v['brier']:.4f} logloss={v['log_loss']:.4f} margin_MAE={vm['margin_mae']:.2f}")
+
+    typer.echo("\n=== HELD-OUT TEST seasons (never used for selection — the honest report) ===")
+    t, tm = result.test_win_probability, result.test_margin
+    typer.echo(f"n={t['n']:.0f} acc={t['accuracy']:.1%} brier={t['brier']:.4f} logloss={t['log_loss']:.4f} margin_MAE={tm['margin_mae']:.2f}")
+
+
 if __name__ == "__main__":
     app()

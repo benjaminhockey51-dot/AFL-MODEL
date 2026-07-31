@@ -93,16 +93,59 @@ flip, and how many real matches back the ratings driving it — a lopsided-looki
 prediction between two barely-rated teams is *not* actually confident, and this reflects
 that.
 
-`form_elo_scale` and `rest_elo_scale_per_day` are currently **0** — a 2018-2026
-walk-forward backtest (see below) showed both hurting win accuracy, Brier score, and log
-loss at their original values, so they're disabled pending proper tuning rather than left
-at a guessed weight. Elo and attack/defence are validated, real contributors; travel's
-effect was too small and inconsistent in direction to justify changing it either way.
+Every rating and prediction-combination parameter (`elo.k_factor`, `home_ground_advantage`,
+`season_regression_factor`, `attack_defence.k_factor`, `league_avg_score_ewma_alpha`,
+`form_elo_scale`, `rest_elo_scale_per_day`, `travel_elo_scale_per_100km`) is frozen from a
+systematic grid search (Stage 7, below), not hand-picked — see `config/config.yaml` for
+the reasoning and honest caveats behind each value.
+
+## Hyperparameter tuning
+
+```bash
+afl-model tune
+```
+
+Systematic grid search — not hand-tuning — over every rating/prediction parameter that
+plausibly affects accuracy. Chronological split (this is walk-forward time-series data;
+a random split would be invalid): 2018 is warm-up only (processed but never scored, since
+every team starts at an identical default rating that season — cold-start noise, not a
+fair test of any candidate), 2019-2024 is the validation set the search is scored against,
+and **2025-2026 is a held-out test period never touched until tuning is completely
+finished** — evaluated exactly once, for the honest final report, with no further
+adjustment afterward.
+
+Split into two independent stages exploiting real structure in this architecture rather
+than brute-forcing blindly: Stage A (`elo.k_factor` × `home_ground_advantage` ×
+`season_regression_factor`, outer — each needs its own walk-forward recomputation — ×
+`form_elo_scale` × `rest_elo_scale_per_day` × `travel_elo_scale_per_100km`, inner — cheap,
+since none of the three ever feed back into a stored rating) is scored by log loss;
+Stage B (`attack_defence.k_factor` × `league_avg_score_ewma_alpha`) is scored by margin
+MAE independently, since margin/total never depend on Elo or situational signals here
+(confirmed by Stage 5's ablation study). 45,360 win-probability combinations and 20 margin
+combinations, ~5 minutes total. `afl_model.ratings.engine.compute_walk_forward` is the
+pure, side-effect-free function this all runs on — no database writes per candidate,
+which is what keeps a search this size tractable.
+
+Held-out test result (2025-2026, n=388, never used for selection): **71.2%** win
+accuracy, 0.1858 Brier, 0.5499 log loss, 26.73 margin MAE — a genuine, if modest,
+improvement in margin accuracy over the previous hand-adjusted config on the identical
+period (27.69 → 26.73 MAE), with win-probability metrics statistically tied either way.
+
+**One deliberate override of the search's own top result**: the grid search's nominal
+best `form_elo_scale` was 10.0, not 0 — but its margin over 0 was razor-thin (log loss
+identical to 4 decimal places between the two), i.e. statistically indistinguishable from
+noise at this sample size, not a real effect. Stage 5's independent ablation study had
+already found 0 to be the more defensible value. Rather than retain a possibly-noise
+effect just because it happened to rank first, `form_elo_scale` was set to **0** — the
+simpler, more parsimonious choice, consistent with two independent methods essentially
+agreeing rather than disagreeing. This decision was made by comparing the two candidates'
+*validation* performance only, without looking at the 2025-2026 holdout to break the
+tie — doing that would have defeated the point of holding it out at all.
 
 ## Backtesting
 
 ```bash
-afl-model backtest --model-version "elo-v3-for-backtest"
+afl-model backtest --model-version "elo-v4-stage7-tuned"
 ```
 
 Walk-forward evaluation of a ratings run against every completed match it covers, using
@@ -148,6 +191,7 @@ src/afl_model/
   models/         Margin / total / win-probability prediction models
   betting/        Odds ingestion, edge/EV, value recommendations
   backtest/       Walk-forward validation engine, accuracy metrics
+  tuning/         Systematic hyperparameter grid search (train/validation/test split)
   reporting/      "Predict round N" output, performance reports
   cli.py          Typer CLI entrypoint
 data/
@@ -177,11 +221,15 @@ of the SQLite database and the git repository itself.
    a full 2018-2026 walk-forward backtest before being finalized
 6. Betting integration (edge/EV, value recommendations) — pipeline and math fully built
    and tested; live odds ingestion is pending a real, paid odds source (an account/
-   payment decision for the project owner, not something built here yet) *(current stage)*
-7. Backtesting framework (walk-forward validation, no lookahead) — core engine
-   (`afl_model.backtest`) already built to validate Stage 5; ROI-vs-closing-line and a
-   proper tuning workflow are still to come once Stage 6 has a real odds source
-8. Performance tracking + reporting/CLI (`afl-model predict <round>`)
+   payment decision for the project owner, not something built here yet)
+7. Backtesting framework (walk-forward validation, no lookahead) — full walk-forward
+   evaluation (`afl_model.backtest`) and systematic hyperparameter tuning
+   (`afl_model.tuning`, `afl-model tune`) both built; every rating/prediction parameter is
+   now frozen from a grid search validated on a held-out 2025-2026 test period.
+   ROI-vs-closing-line and an evidence-based betting edge threshold remain explicitly
+   blocked on Stage 6 getting a real odds source — cannot be determined without real
+   odds, so this isn't attempted with placeholder data
+8. Performance tracking + reporting/CLI (`afl-model predict <round>`) *(current stage)*
 9. Automation (scheduled auto-update after each completed round)
 10. Future extensions — player disposals, Brownlow modelling, Same Game Multi,
     live predictions, finals modelling

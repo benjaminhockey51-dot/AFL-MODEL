@@ -71,7 +71,12 @@ def test_full_model_predicts_the_dominant_team_correctly_most_of_the_time(domina
 
     assert report.full_model.n > 20
     assert report.full_model.win_accuracy > 0.8
-    assert report.full_model.margin_mae < 30  # should learn the ~110-point margin reasonably well
+    # Loose bound deliberately: attack_defence.k_factor is now 0.05 (Stage 7
+    # search result — slower-adapting than the old 0.15 default), so a
+    # ~110-point margin takes more matches to fully learn than this small
+    # synthetic dataset provides. This just checks real learning happened
+    # (a coin-flip/no-skill margin model would be far worse than this).
+    assert report.full_model.margin_mae < 50
 
 
 def test_ablating_elo_produces_a_named_variant_for_every_feature(dominant_team_dataset):

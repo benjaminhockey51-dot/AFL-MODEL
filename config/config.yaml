@@ -31,16 +31,20 @@ data:
 logging:
   config_path: "config/logging.yaml"
 
-# Rating engine parameters. These are reasonable, documented starting
-# priors (standard Elo conventions, FiveThirtyEight-style margin-of-victory
-# damping) — NOT asserted as optimal. Once Stage 7's backtesting framework
-# exists, every value here should be empirically validated, and any change
-# that reduces long-run backtested accuracy gets reverted, per the
-# project's core rule.
+# Rating engine parameters. elo.k_factor, home_ground_advantage,
+# season_regression_factor, attack_defence.k_factor, and
+# league_avg_score_ewma_alpha were frozen by Stage 7's systematic grid
+# search (afl-model tune) — a 252 x 180 combination search for the
+# win-probability group (scored by log loss) and a 20-combination search
+# for the margin group (scored by MAE), both scored on the 2019-2024
+# validation seasons only. mov_multiplier_divisor/scale and starting_rating/
+# season_regression_target were deliberately left un-searched — see
+# afl_model.tuning.grid for why. Re-run afl-model tune (not by hand) if
+# more data or a materially different model warrants revisiting these.
 ratings:
   elo:
     starting_rating: 1500.0
-    k_factor: 20.0
+    k_factor: 15.0
     # Margin-of-victory multiplier (FiveThirtyEight NFL/NBA Elo style):
     # mov_multiplier = ln(|margin| + 1) * (mov_multiplier_divisor /
     #   (elo_diff_of_winner * mov_multiplier_scale + mov_multiplier_divisor))
@@ -52,22 +56,23 @@ ratings:
     # Elo points added to the home team's rating for win-probability
     # purposes only (not stored as a separate per-team rating in v1 — see
     # Stage 4 write-up for why team/venue-specific HGA was deferred).
+    # Unchanged by the Stage 7 search — 35.0 was already the validated best.
     home_ground_advantage: 35.0
     # Applied once, the first time a team appears in a new season: pulls
     # the rating partway back toward season_regression_target, since a
     # team's true strength between seasons (list changes, etc.) regresses
     # toward the mean more than in-season form does.
-    season_regression_factor: 0.75
+    season_regression_factor: 0.65
     season_regression_target: 1500.0
 
   attack_defence:
     # Operates in points-space, so needs its own (much smaller) k_factor
     # than Elo's win/loss-space k_factor.
-    k_factor: 0.15
+    k_factor: 0.05
     starting_league_avg_score: 85.0
     # League-average scoring drifts across eras (rule changes, congestion)
     # — tracked as a slow-moving EWMA rather than a fixed constant.
-    league_avg_score_ewma_alpha: 0.02
+    league_avg_score_ewma_alpha: 0.01
 
   form:
     # Higher alpha than Elo's effective memory — form is deliberately a
@@ -90,33 +95,34 @@ ratings:
       enabled: true
 
 # Prediction engine: how the individual rating signals (Stage 4) combine
-# into a single win probability, margin, and total. Same caveat as
-# ratings: reasonable starting priors, not asserted-optimal — Stage 7
-# backtesting is what validates or corrects these.
+# into a single win probability, margin, and total. Margin/total come
+# purely from attack/defence ratings in v1 — extending situational
+# adjustments to points-space too is a natural follow-up once a future
+# search shows it would help.
 prediction:
-  # Situational adjustments (form, rest, travel) are folded into the
-  # win-probability calculation as Elo-equivalent points, added to the
-  # same effective rating difference that home_ground_advantage adjusts.
-  # Margin/total, by contrast, come purely from attack/defence ratings in
-  # v1 — extending situational adjustments to points-space too is a
-  # natural follow-up once backtesting shows the win-probability version
-  # actually helps.
-  # form_elo_scale and rest_elo_scale_per_day were both set to 0 after the
-  # 2018-2026 walk-forward backtest (afl-model backtest) showed the full
-  # model losing to its own Elo-only baseline (65.8% vs 66.9% win accuracy;
-  # worse Brier and log loss too) — leave-one-out ablation confirmed both
-  # individually hurt at their original weights (100.0 and 3.0
-  # respectively). Set to exactly 0 rather than a guessed smaller nonzero
-  # value: that's what the ablation itself already tested, and it's the
-  # only value with actual evidence behind it. The underlying form/rest
-  # ratings are still computed and stored by the ratings engine (Stage 4)
-  # for future re-tuning — only their weight in this combination is zero.
+  # rest_elo_scale_per_day and travel_elo_scale_per_100km were frozen by the
+  # Stage 7 grid search (afl-model tune), scored jointly with
+  # elo.k_factor/home_ground_advantage/season_regression_factor by log loss
+  # on the 2019-2024 validation seasons. rest_elo_scale_per_day converged
+  # to 0 independently of the earlier Stage 5 ablation — two different
+  # methods now agree it has no measurable value in this dataset.
+  #
+  # form_elo_scale is deliberately 0, NOT the search's own top result: the
+  # grid search's nominal winner was 10.0, but its margin over 0 was
+  # razor-thin (log loss identical to 4 decimal places between form=0 and
+  # form=10 — indistinguishable from noise at this sample size, not a real
+  # effect). Stage 5's independent ablation study had already found 0 to
+  # be the more defensible value. Given two methods produced a genuine tie
+  # rather than two methods agreeing on a nonzero weight, 0 was kept as
+  # the simpler, more parsimonious choice — deliberately rejecting the
+  # search's nominal top result rather than retaining an effect that may
+  # well be noise. This was a judgment call made *without* looking at the
+  # 2025-2026 held-out test period to decide between them — using the
+  # holdout to pick a value would have defeated the point of holding it
+  # out at all.
   form_elo_scale: 0.0
   rest_elo_scale_per_day: 0.0
-  # travel showed no clear evidence of benefit or harm (effect size small,
-  # inconsistent in direction across metrics) — left unchanged rather than
-  # guessed in either direction.
-  travel_elo_scale_per_100km: 1.5
+  travel_elo_scale_per_100km: 2.5
   # Predicted margin is rounded to this increment for predicted_line,
   # matching standard AFL handicap-betting convention (lines are set in
   # half-point increments so a match can't push/tie against the line).
