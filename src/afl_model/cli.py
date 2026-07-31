@@ -60,9 +60,46 @@ def ingest_squiggle(
     summary = ingest_season(year=year, round_number=round_number)
     typer.echo(
         f"{summary.year}: {summary.games_seen} games fetched, "
-        f"{summary.matches_created} created, {summary.matches_updated} updated, "
+        f"{summary.matches_created} created, {summary.matches_linked_existing} linked to "
+        f"existing matches, {summary.matches_resynced} resynced, "
         f"{summary.venues_auto_created} venue(s) auto-created."
     )
+
+
+@app.command()
+def seed_afltables_aliases() -> None:
+    """Link the 18 current clubs to their AFL Tables team-name strings (idempotent)."""
+    from afl_model.db.seed import seed_afltables_team_aliases
+
+    inserted = seed_afltables_team_aliases()
+    typer.echo(f"Inserted {inserted} AFL Tables team alias(es).")
+
+
+@app.command()
+def ingest_afltables(
+    year: int = typer.Argument(..., help="Season to fetch, e.g. 2018"),
+) -> None:
+    """Fetch results, attendance, and team/player stats from AFL Tables."""
+    from afl_model.data.ingest_afltables import ingest_season
+
+    summary = ingest_season(year=year)
+    typer.echo(
+        f"{summary.year}: {summary.games_seen} games parsed "
+        f"({summary.games_incomplete_skipped} incomplete/skipped), "
+        f"{summary.matches_created} created, {summary.matches_linked_existing} linked, "
+        f"{summary.matches_resynced} resynced, {summary.venues_auto_created} venue(s) auto-created, "
+        f"{summary.team_stats_written} team-stat rows, {summary.player_stats_written} player-stat rows, "
+        f"{summary.players_created} new player(s)."
+    )
+
+
+@app.command()
+def reconcile_venues() -> None:
+    """Merge known sponsor-renamed venue duplicates (e.g. Marvel Stadium/Docklands)."""
+    from afl_model.data.venue_reconciliation import reconcile_known_venue_duplicates
+
+    merged = reconcile_known_venue_duplicates()
+    typer.echo(f"Merged {merged} duplicate venue(s).")
 
 
 @app.command()

@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import date, datetime
 from typing import Optional
 
-from sqlalchemy import Boolean, Date, DateTime, ForeignKey, UniqueConstraint
+from sqlalchemy import Boolean, Date, DateTime, ForeignKey, UniqueConstraint, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from afl_model.db.base import Base
@@ -12,14 +12,28 @@ from afl_model.db.base import Base
 class Match(Base):
     """One row per AFL match (home & away, minor round or final).
 
-    (source, source_match_id) makes ingestion idempotent — re-running a
-    scrape upserts rather than duplicates. Scores are stored as
-    goals/behinds, not just total points, since points is a derived value
-    (goals * 6 + behinds) and goals/behinds are independently meaningful.
+    Identity is the real-world natural key — (season_year, match_date,
+    home_team_id, away_team_id) — not any one source's ID. Two teams never
+    play each other twice on the same date, so this holds regardless of how
+    many sources describe the match, and it sidesteps a real inconsistency
+    between sources: Squiggle numbers finals rounds (24/25/26/27) while AFL
+    Tables names them ("Qualifying Final", "Elimination Final", ...) — round
+    number/name is descriptive here, not identity.
+
+    Per-source external IDs (for idempotent re-syncing from one source) live
+    in MatchSourceRef, not on this table, because a single canonical match
+    is enriched by multiple independent sources (Squiggle for fixtures/
+    live results, AFL Tables for attendance/stats/history). created_by_*
+    records only which source first created the row, for provenance.
     """
 
     __tablename__ = "matches"
-    __table_args__ = (UniqueConstraint("source", "source_match_id"),)
+    __table_args__ = (
+        UniqueConstraint(
+            "season_year", "match_date", "home_team_id", "away_team_id",
+            name="uq_matches_season_date_home_away",
+        ),
+    )
 
     id: Mapped[int] = mapped_column(primary_key=True)
 
@@ -46,8 +60,24 @@ class Match(Base):
     weather_temp_c: Mapped[Optional[float]] = mapped_column(default=None)
     weather_condition: Mapped[Optional[str]] = mapped_column(default=None)
 
+    created_by_source: Mapped[str]
+    created_by_source_match_id: Mapped[str]
+
+
+class MatchSourceRef(Base):
+    """Links a canonical Match to one source's external ID for that match —
+    the idempotency key each source's ingestion pipeline upserts against.
+    A match typically has one ref per source that has ever ingested it.
+    """
+
+    __tablename__ = "match_source_refs"
+    __table_args__ = (UniqueConstraint("source", "source_match_id"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    match_id: Mapped[int] = mapped_column(ForeignKey("matches.id"))
     source: Mapped[str]
     source_match_id: Mapped[str]
+    last_synced_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
 
 class TeamMatchStats(Base):
@@ -106,6 +136,22 @@ class PlayerMatchStats(Base):
     contested_possessions: Mapped[Optional[int]] = mapped_column(default=None)
     uncontested_possessions: Mapped[Optional[int]] = mapped_column(default=None)
     time_on_ground_pct: Mapped[Optional[float]] = mapped_column(default=None)
+
+    # The remaining columns match AFL Tables' full per-player stat line
+    # exactly (see its "Abbreviations key") — captured now rather than
+    # partially, since re-scraping years of history later to backfill a
+    # missed column would mean hitting afltables.com all over again.
+    inside_50s: Mapped[Optional[int]] = mapped_column(default=None)
+    rebound_50s: Mapped[Optional[int]] = mapped_column(default=None)
+    clangers: Mapped[Optional[int]] = mapped_column(default=None)
+    frees_for: Mapped[Optional[int]] = mapped_column(default=None)
+    frees_against: Mapped[Optional[int]] = mapped_column(default=None)
+    brownlow_votes: Mapped[Optional[int]] = mapped_column(default=None)
+    contested_marks: Mapped[Optional[int]] = mapped_column(default=None)
+    marks_inside_50: Mapped[Optional[int]] = mapped_column(default=None)
+    one_percenters: Mapped[Optional[int]] = mapped_column(default=None)
+    bounces: Mapped[Optional[int]] = mapped_column(default=None)
+    goal_assists: Mapped[Optional[int]] = mapped_column(default=None)
 
 
 class TeamSelection(Base):

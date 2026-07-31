@@ -15,6 +15,7 @@ EXPECTED_TABLES = {
     "venue_aliases",
     "players",
     "matches",
+    "match_source_refs",
     "team_match_stats",
     "player_match_stats",
     "team_selections",

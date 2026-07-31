@@ -3,9 +3,9 @@ from __future__ import annotations
 import pytest
 import sqlalchemy as sa
 
-from afl_model.data.ingest_squiggle import ingest_season, resolve_team
-from afl_model.db.connection import get_session
-from afl_model.db.models import Match, Venue
+from afl_model.data.ingest_squiggle import ingest_season
+from afl_model.data.team_venue_resolution import resolve_team
+from afl_model.db.models import Match, MatchSourceRef, Venue
 from afl_model.db.seed import seed_squiggle_team_aliases, seed_teams
 
 COMPLETE_GAME = {
@@ -62,21 +62,28 @@ def seeded(db_session):
     return db_session
 
 
+def _match_for_squiggle_id(session, squiggle_id: str) -> Match:
+    ref = session.execute(
+        sa.select(MatchSourceRef).where(
+            MatchSourceRef.source == "squiggle", MatchSourceRef.source_match_id == squiggle_id
+        )
+    ).scalar_one()
+    return session.get(Match, ref.match_id)
+
+
 def test_resolve_team_raises_for_unknown_alias(seeded):
-    with pytest.raises(ValueError, match="No Squiggle team alias"):
-        resolve_team(seeded, "Not A Real Team")
+    with pytest.raises(ValueError, match="No squiggle team alias"):
+        resolve_team(seeded, "squiggle", "Not A Real Team")
 
 
 def test_ingest_season_creates_match_resolves_teams_and_venue(seeded):
     summary = ingest_season(2018, client=FakeSquiggleClient([COMPLETE_GAME]))
 
     assert summary.matches_created == 1
-    assert summary.matches_updated == 0
+    assert summary.matches_resynced == 0
     assert summary.venues_auto_created == 1
 
-    match = seeded.execute(
-        sa.select(Match).where(Match.source == "squiggle", Match.source_match_id == "372")
-    ).scalar_one()
+    match = _match_for_squiggle_id(seeded, "372")
     assert match.home_points == 121
     assert match.away_points == 95
     assert match.round_name == "Round 1"
@@ -88,9 +95,7 @@ def test_ingest_season_creates_match_resolves_teams_and_venue(seeded):
 def test_incomplete_game_scores_left_null(seeded):
     ingest_season(2018, client=FakeSquiggleClient([INCOMPLETE_GAME]))
 
-    match = seeded.execute(
-        sa.select(Match).where(Match.source == "squiggle", Match.source_match_id == "999")
-    ).scalar_one()
+    match = _match_for_squiggle_id(seeded, "999")
     assert match.home_points is None
     assert match.away_points is None
 
@@ -101,7 +106,7 @@ def test_ingest_season_is_idempotent(seeded):
 
     second = ingest_season(2018, client=FakeSquiggleClient([COMPLETE_GAME]))
     assert second.matches_created == 0
-    assert second.matches_updated == 1
+    assert second.matches_resynced == 1
 
     total_matches = seeded.execute(sa.select(sa.func.count()).select_from(Match)).scalar_one()
     assert total_matches == 1
@@ -115,8 +120,6 @@ def test_ingest_season_updates_score_once_game_completes(seeded):
     }}
     ingest_season(2018, client=FakeSquiggleClient([completed_version]))
 
-    match = seeded.execute(
-        sa.select(Match).where(Match.source == "squiggle", Match.source_match_id == "999")
-    ).scalar_one()
+    match = _match_for_squiggle_id(seeded, "999")
     assert match.home_points == 65
     assert match.away_points == 58

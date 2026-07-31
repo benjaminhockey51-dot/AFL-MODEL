@@ -20,6 +20,14 @@ data:
     min_request_interval_seconds: 1.1
     contact_email: null
 
+  afltables:
+    # No public API — this is a personal site scraped politely: a longer
+    # gap between requests than Squiggle's, plus aggressive local caching
+    # (raw_cache_dir) so completed seasons are only ever fetched once.
+    min_request_interval_seconds: 2.5
+    user_agent: "afl-model/0.1 (personal AFL prediction project, non-commercial, low request rate)"
+    raw_cache_dir: "data/raw/afltables"
+
 logging:
   config_path: "config/logging.yaml"
 

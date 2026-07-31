@@ -60,37 +60,74 @@ SQUIGGLE_TEAM_ALIASES: Dict[str, str] = {
 }
 
 
-def seed_squiggle_team_aliases() -> int:
-    """Link each of the 18 current clubs to its Squiggle team-name string.
-    Idempotent. Requires seed_teams() to have run first.
+# AFL Tables' team names for the 18 current clubs, confirmed directly
+# against real season pages (e.g. afltables.com/afl/seas/2018.html) rather
+# than assumed — they happen to match Squiggle's naming exactly today, but
+# are recorded independently since the two sources have no relationship to
+# each other and could diverge.
+AFLTABLES_TEAM_ALIASES: Dict[str, str] = {
+    "Adelaide": "Adelaide Crows",
+    "Brisbane Lions": "Brisbane Lions",
+    "Carlton": "Carlton",
+    "Collingwood": "Collingwood",
+    "Essendon": "Essendon",
+    "Fremantle": "Fremantle",
+    "Geelong": "Geelong Cats",
+    "Gold Coast": "Gold Coast Suns",
+    "Greater Western Sydney": "GWS Giants",
+    "Hawthorn": "Hawthorn",
+    "Melbourne": "Melbourne",
+    "North Melbourne": "North Melbourne",
+    "Port Adelaide": "Port Adelaide",
+    "Richmond": "Richmond",
+    "St Kilda": "St Kilda",
+    "Sydney": "Sydney Swans",
+    "West Coast": "West Coast Eagles",
+    "Western Bulldogs": "Western Bulldogs",
+}
+
+
+def _seed_team_aliases(source: str, aliases: Dict[str, str]) -> int:
+    """Shared implementation: link each source-specific team name string to
+    its canonical Team. Idempotent. Requires seed_teams() to have run first.
     """
     session = get_session()
     inserted = 0
     try:
         existing = set(
             session.execute(
-                sa.select(TeamAlias.alias_name).where(TeamAlias.source == "squiggle")
+                sa.select(TeamAlias.alias_name).where(TeamAlias.source == source)
             )
             .scalars()
             .all()
         )
         teams_by_name = {t.name: t for t in session.execute(sa.select(Team)).scalars().all()}
 
-        for squiggle_name, canonical_name in SQUIGGLE_TEAM_ALIASES.items():
-            if squiggle_name in existing:
+        for source_name, canonical_name in aliases.items():
+            if source_name in existing:
                 continue
             team = teams_by_name.get(canonical_name)
             if team is None:
                 raise ValueError(
-                    f"Cannot seed Squiggle alias '{squiggle_name}': "
+                    f"Cannot seed {source} alias '{source_name}': "
                     f"canonical team '{canonical_name}' not found. Run seed_teams() first."
                 )
-            session.add(TeamAlias(team_id=team.id, source="squiggle", alias_name=squiggle_name))
+            session.add(TeamAlias(team_id=team.id, source=source, alias_name=source_name))
             inserted += 1
         session.commit()
     finally:
         session.close()
     return inserted
+
+
+def seed_squiggle_team_aliases() -> int:
+    """Link each of the 18 current clubs to its Squiggle team-name string."""
+    return _seed_team_aliases("squiggle", SQUIGGLE_TEAM_ALIASES)
+
+
+def seed_afltables_team_aliases() -> int:
+    """Link each of the 18 current clubs to its AFL Tables team-name string."""
+    return _seed_team_aliases("afltables", AFLTABLES_TEAM_ALIASES)
 
 
 def seed_teams() -> int:
