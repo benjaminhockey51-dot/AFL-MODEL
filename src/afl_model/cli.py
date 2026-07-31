@@ -234,5 +234,63 @@ def backtest(
         typer.echo(f"{g.group:24} n={g.n:5} acc={g.accuracy:6.1%} MAE={g.margin_mae:6.2f}")
 
 
+@app.command()
+def assess_value(
+    round_number: int = typer.Argument(..., help="Round number to assess"),
+    year: int = typer.Option(None, "--year", help="Season year (defaults to the most recent season in the database)"),
+    model_version: str = typer.Option(None, "--model-version", help="Ratings run to use (defaults to the most recent)"),
+    snapshot_type: str = typer.Option("close", "--snapshot", help="Odds snapshot to compare against: open | mid | close"),
+) -> None:
+    """Compare existing predictions against existing odds for a round and
+    recommend Bet Home / Bet Away / No Bet.
+
+    Never recommends a bet without both a real prediction (`afl-model
+    predict`) and real odds already on file, and never invents a value
+    threshold — with no odds source configured yet (`betting:` in
+    config.yaml), every match here reports "No Bet (no odds available)".
+    """
+    import sqlalchemy as sa
+
+    from afl_model.betting.recommend import assess_round_value
+    from afl_model.db.connection import get_session
+    from afl_model.db.models import Season
+
+    if year is None:
+        session = get_session()
+        try:
+            year = session.execute(sa.select(sa.func.max(Season.year))).scalar_one_or_none()
+        finally:
+            session.close()
+        if year is None:
+            typer.echo("No seasons in the database yet.")
+            raise typer.Exit(code=1)
+
+    try:
+        rows = assess_round_value(year, round_number, version_name=model_version, snapshot_type=snapshot_type)
+    except ValueError as e:
+        typer.echo(str(e))
+        raise typer.Exit(code=1)
+
+    typer.echo(f"\n{year} Round {round_number} betting value ({snapshot_type} odds):\n")
+    header = f"{'Match':38} {'Our winner':16} {'Win %':>7} {'Recommendation':26} {'Book':12} {'Edge':>7} {'EV':>7}"
+    typer.echo(header)
+    typer.echo("-" * len(header))
+    for row in rows:
+        matchup = f"{row.home_team} v {row.away_team}"
+        win_pct = f"{row.home_win_probability * 100:.1f}%" if row.home_win_probability is not None else "n/a"
+        if row.recommendation == "Bet Home":
+            edge, ev = row.home_edge, row.home_ev
+        elif row.recommendation == "Bet Away":
+            edge, ev = row.away_edge, row.away_ev
+        else:
+            edge, ev = None, None
+        edge_str = f"{edge * 100:+.1f}%" if edge is not None else "-"
+        ev_str = f"{ev:+.3f}" if ev is not None else "-"
+        typer.echo(
+            f"{matchup:38} {row.predicted_winner:16} {win_pct:>7} {row.recommendation:26} "
+            f"{row.bookmaker or '-':12} {edge_str:>7} {ev_str:>7}"
+        )
+
+
 if __name__ == "__main__":
     app()

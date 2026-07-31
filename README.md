@@ -113,6 +113,29 @@ baselines (always-home, Elo-only), and for a leave-one-out ablation of each of t
 Stage 4 rating signals — this is what justified disabling form/rest above, and what
 should be re-run after any future rating or prediction-config change before trusting it.
 
+## Betting integration
+
+```bash
+afl-model assess-value 22
+```
+
+Compares whatever predictions and odds already exist for a round and recommends **Bet
+Home** / **Bet Away** / **No Bet** — never generates either on the fly, and never
+recommends a bet without a real edge clearing a real, configured threshold.
+
+**No odds source is connected yet.** `afl_model.betting.odds_client.OddsClient` is a
+plugin contract (`get_odds(year, round) -> List[ScrapedOdds]`) that any real source
+implements — a paid API is the realistic option (AFL coverage needs it; free tiers don't
+cover AFL), but that requires an account and payment only the project owner can provide,
+so no concrete client exists yet. `afl_model.data.ingest_odds` (the ingestion pipeline
+that attaches quotes to existing matches, resolving team names through the same
+fail-loud alias mechanism every other source uses) and `afl_model.betting.value` (edge/
+EV math, overround removal) are both fully built and tested against a fake client —
+wiring in a real source is a small, contained change once one is chosen. Until then,
+`betting.min_edge_threshold` in `config/config.yaml` stays `null`, so no bet is ever
+recommended — matching `assess-value`'s honest "No Bet (no odds available)" for every
+match right now.
+
 ## Project layout
 
 ```
@@ -152,10 +175,12 @@ of the SQLite database and the git repository itself.
 4. Ratings engine (Elo, attack/defence, form, travel/rest/injury adjustments)
 5. Prediction engine (winner, margin, line, total, win %, confidence) — validated against
    a full 2018-2026 walk-forward backtest before being finalized
-6. Betting integration (odds source, edge/EV, value recommendations) *(current stage)*
+6. Betting integration (edge/EV, value recommendations) — pipeline and math fully built
+   and tested; live odds ingestion is pending a real, paid odds source (an account/
+   payment decision for the project owner, not something built here yet) *(current stage)*
 7. Backtesting framework (walk-forward validation, no lookahead) — core engine
    (`afl_model.backtest`) already built to validate Stage 5; ROI-vs-closing-line and a
-   proper tuning workflow are still to come once Stage 6 provides odds
+   proper tuning workflow are still to come once Stage 6 has a real odds source
 8. Performance tracking + reporting/CLI (`afl-model predict <round>`)
 9. Automation (scheduled auto-update after each completed round)
 10. Future extensions — player disposals, Brownlow modelling, Same Game Multi,
