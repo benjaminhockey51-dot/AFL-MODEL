@@ -20,6 +20,7 @@ SOURCE = "squiggle"
 class IngestSummary:
     year: int
     games_seen: int = 0
+    games_unscheduled_skipped: int = 0
     matches_created: int = 0
     matches_linked_existing: int = 0
     matches_resynced: int = 0
@@ -51,6 +52,15 @@ def ingest_season(
                      f" round {round_number}" if round_number else "")
 
         for game in games:
+            if not game.get("hteam") or not game.get("ateam"):
+                # A future finals slot whose participants aren't decided
+                # yet (ladder position still in play) — Squiggle lists
+                # these with null team names and a real date/venue as
+                # placeholders, not a data error. Nothing to create until
+                # the teams are actually known.
+                summary.games_unscheduled_skipped += 1
+                continue
+
             home_team = resolve_team(session, SOURCE, game["hteam"])
             away_team = resolve_team(session, SOURCE, game["ateam"])
             venue, venue_created = resolve_venue(session, SOURCE, game.get("venue") or "")
@@ -102,8 +112,8 @@ def ingest_season(
 
     logger.info(
         "Ingest complete for %d: %d created, %d linked to existing matches, "
-        "%d resynced, %d venues auto-created",
+        "%d resynced, %d venues auto-created, %d unscheduled finals slots skipped",
         year, summary.matches_created, summary.matches_linked_existing,
-        summary.matches_resynced, summary.venues_auto_created,
+        summary.matches_resynced, summary.venues_auto_created, summary.games_unscheduled_skipped,
     )
     return summary

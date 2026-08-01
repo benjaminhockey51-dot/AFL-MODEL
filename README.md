@@ -204,6 +204,39 @@ wiring in a real source is a small, contained change once one is chosen. Until t
 recommended — matching `assess-value`'s honest "No Bet (no odds available)" for every
 match right now.
 
+## Automation
+
+```bash
+afl-model auto-update
+```
+
+The single entrypoint a scheduler calls: ingests the latest Squiggle + AFL Tables data
+for the current season, reconciles venues, re-runs the ratings engine (only if a match
+actually completed since the last run — comparing completed-match counts before and
+after ingestion, since ingestion "resyncs" every known match on every run regardless of
+whether anything changed, so that alone isn't a usable signal), predicts the next
+unplayed round, and reconciles predictions for matches that have since been played.
+Every step is fault-isolated — a Squiggle outage is logged and reported but doesn't stop
+predictions from being regenerated against whatever data already exists.
+
+Runs independent of any AI assistant session, per the project's original design — this
+needs to keep running for years regardless of whether anyone's talking to Claude.
+`deploy/com.aflmodel.autoupdate.plist` is a macOS launchd job (daily at 08:00; launchd
+runs a missed `StartCalendarInterval` job once the Mac wakes if it was asleep at the
+scheduled time) that has **not** been installed or activated — copying a plist into
+`~/Library/LaunchAgents/` and loading it starts a persistent background job, so that's a
+deliberate decision for you to make, not something done automatically. To install it:
+
+```bash
+cp deploy/com.aflmodel.autoupdate.plist ~/Library/LaunchAgents/
+launchctl load ~/Library/LaunchAgents/com.aflmodel.autoupdate.plist
+```
+
+To check it's running: `launchctl list | grep aflmodel`. To stop/remove it:
+`launchctl unload ~/Library/LaunchAgents/com.aflmodel.autoupdate.plist && rm ~/Library/LaunchAgents/com.aflmodel.autoupdate.plist`.
+Requires at least one manual `afl-model run-ratings` first — a brand new database with
+no ratings history can't predict anything.
+
 ## Project layout
 
 ```
@@ -218,7 +251,10 @@ src/afl_model/
   backtest/       Walk-forward validation engine, accuracy metrics
   tuning/         Systematic hyperparameter grid search (train/validation/test split)
   reporting/      "Predict round N" output, performance reports
+  automation/     Scheduled end-to-end update pipeline (afl-model auto-update)
   cli.py          Typer CLI entrypoint
+deploy/
+  com.aflmodel.autoupdate.plist  macOS launchd job (not installed/activated by default)
 data/
   raw/            Untouched scraped snapshots (immutable, gitignored)
   staged/         Cleaned intermediate data (gitignored)
@@ -258,6 +294,9 @@ of the SQLite database and the git repository itself.
    experience (table, highest-confidence, best-value, games-to-avoid, per-match
    explanations); `afl_model.reporting.reconcile` + `afl-model performance-report` track
    real accuracy over time, distinct from backtesting's historical simulation
-9. Automation (scheduled auto-update after each completed round) *(current stage)*
+9. Automation — `afl-model auto-update` and a macOS launchd job (`deploy/`) are built and
+   verified against the real database; the job itself is not installed/activated by
+   default (a persistent background job is a deliberate decision, not an automatic one)
+   *(current stage)*
 10. Future extensions — player disposals, Brownlow modelling, Same Game Multi,
     live predictions, finals modelling

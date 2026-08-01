@@ -59,7 +59,8 @@ def ingest_squiggle(
 
     summary = ingest_season(year=year, round_number=round_number)
     typer.echo(
-        f"{summary.year}: {summary.games_seen} games fetched, "
+        f"{summary.year}: {summary.games_seen} games fetched "
+        f"({summary.games_unscheduled_skipped} unscheduled finals slots skipped), "
         f"{summary.matches_created} created, {summary.matches_linked_existing} linked to "
         f"existing matches, {summary.matches_resynced} resynced, "
         f"{summary.venues_auto_created} venue(s) auto-created."
@@ -431,6 +432,46 @@ def performance_report(
         acc = f"{s.win_accuracy:.1%}" if s.win_accuracy is not None else "n/a"
         mae = f"{s.margin_mae:.2f}" if s.margin_mae is not None else "n/a"
         typer.echo(f"{s.season_year}  n={s.n:4}  acc={acc:>6}  margin_MAE={mae}")
+
+
+@app.command()
+def auto_update(
+    year: int = typer.Option(None, "--year", help="Season year (defaults to the current calendar year)"),
+) -> None:
+    """The single entrypoint a scheduler calls (see docs/automation.md):
+    ingest latest Squiggle + AFL Tables data, reconcile venues, re-run
+    ratings only if new matches were found, predict the next unplayed
+    round, and reconcile predictions for matches that have since been
+    played. Every step is fault-isolated — one failure is logged and
+    reported, but doesn't stop the rest of the pipeline from running.
+
+    Requires at least one prior `afl-model run-ratings` — a brand new
+    database with no ratings history yet can't predict anything.
+    """
+    from afl_model.automation.pipeline import run_auto_update
+
+    summary = run_auto_update(year)
+
+    typer.echo(f"Auto-update for {summary.season_year}:")
+    if summary.squiggle_summary:
+        s = summary.squiggle_summary
+        typer.echo(f"  Squiggle: {s.matches_created} created, {s.matches_linked_existing} linked, {s.matches_resynced} resynced")
+    if summary.afltables_summary:
+        a = summary.afltables_summary
+        typer.echo(f"  AFL Tables: {a.matches_created} created, {a.team_stats_written} team-stat rows, {a.player_stats_written} player-stat rows")
+    typer.echo(f"  Venues merged: {summary.venues_merged}")
+    typer.echo(f"  Ratings re-run: {summary.ratings_version_name or 'skipped (no new data)'}")
+    if summary.predicted_round is not None:
+        typer.echo(f"  Predicted round {summary.predicted_round}: {summary.predictions_generated} match(es)")
+    else:
+        typer.echo("  No unplayed round to predict.")
+    typer.echo(f"  Predictions reconciled: {summary.predictions_reconciled}")
+
+    if summary.errors:
+        typer.echo(f"\n{len(summary.errors)} error(s) occurred (see logs/afl_model.log for details):")
+        for e in summary.errors:
+            typer.echo(f"  - {e}")
+        raise typer.Exit(code=1)
 
 
 if __name__ == "__main__":

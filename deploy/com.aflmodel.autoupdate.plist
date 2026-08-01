@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.aflmodel.autoupdate</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/Users/benjaminhockey/Developer/AFL-Model/.venv/bin/afl-model</string>
+        <string>auto-update</string>
+    </array>
+
+    <key>WorkingDirectory</key>
+    <string>/Users/benjaminhockey/Developer/AFL-Model</string>
+
+    <!-- Once daily at 08:00 local time. Deliberately not timed to exact
+         game-completion times — auto-update is cheap and idempotent on a
+         no-op day (ratings only re-run when a match actually completed
+         since the last run), so a simple daily schedule is more robust
+         than trying to predict when the last game of a round finishes. -->
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Hour</key>
+        <integer>8</integer>
+        <key>Minute</key>
+        <integer>0</integer>
+    </dict>
+
+    <key>StandardOutPath</key>
+    <string>/Users/benjaminhockey/Developer/AFL-Model/logs/auto_update.stdout.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/benjaminhockey/Developer/AFL-Model/logs/auto_update.stderr.log</string>
+</dict>
+</plist>

@@ -47,6 +47,28 @@ INCOMPLETE_GAME = {
 }
 
 
+# Real shape observed from the live API on 2026-08-01: a future finals
+# slot whose participants aren't decided yet (ladder still in play).
+UNSCHEDULED_FINALS_GAME = {
+    "id": 38700,
+    "year": 2018,
+    "round": 26,
+    "roundname": "Finals Week 1",
+    "date": "2018-09-05 19:20:00",
+    "hteam": None,
+    "ateam": None,
+    "venue": None,
+    "complete": 0,
+    "is_final": 1,
+    "hgoals": None,
+    "hbehinds": None,
+    "hscore": None,
+    "agoals": None,
+    "abehinds": None,
+    "ascore": None,
+}
+
+
 class FakeSquiggleClient:
     def __init__(self, games):
         self._games = games
@@ -123,3 +145,14 @@ def test_ingest_season_updates_score_once_game_completes(seeded):
     match = _match_for_squiggle_id(seeded, "999")
     assert match.home_points == 65
     assert match.away_points == 58
+
+
+def test_ingest_season_skips_unscheduled_finals_slots_without_crashing(seeded):
+    # Regression test: a future finals slot with no participants decided
+    # yet has hteam/ateam == None in the real API — this must be skipped,
+    # not crash the whole ingest trying to resolve a "None" team alias.
+    summary = ingest_season(2018, client=FakeSquiggleClient([COMPLETE_GAME, UNSCHEDULED_FINALS_GAME]))
+
+    assert summary.games_seen == 2
+    assert summary.games_unscheduled_skipped == 1
+    assert summary.matches_created == 1  # only the real, complete game
