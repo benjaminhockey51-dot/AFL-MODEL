@@ -135,16 +135,19 @@ def predict(
         None, "--model-version", help="Ratings run to predict from (defaults to the most recent)"
     ),
 ) -> None:
-    """Predict every match in a round: winner, margin, line, total, win probability, confidence.
+    """Predict every match in a round: winner, margin, line, total, win
+    probability, confidence — plus highest-confidence picks, best value
+    bets (if any odds are connected), games to avoid, and a plain-English
+    explanation for every prediction.
 
-    Uses the given ratings run's *current* state, never bookmaker odds —
-    odds only enter the picture later, for comparison (Stage 6).
+    Uses the given ratings run's *current* state, never bookmaker odds for
+    the prediction itself — odds are only ever compared afterward.
     """
     import sqlalchemy as sa
 
     from afl_model.db.connection import get_session
     from afl_model.db.models import Season
-    from afl_model.models.predict import predict_round
+    from afl_model.reporting.round_report import build_round_report
 
     if year is None:
         session = get_session()
@@ -157,22 +160,46 @@ def predict(
             raise typer.Exit(code=1)
 
     try:
-        rows = predict_round(year, round_number, version_name=model_version)
+        report = build_round_report(year, round_number, version_name=model_version)
     except ValueError as e:
         typer.echo(str(e))
         raise typer.Exit(code=1)
+
+    def matchup(row) -> str:
+        return f"{row.home_team} v {row.away_team}"
 
     typer.echo(f"\n{year} Round {round_number} predictions:\n")
     header = f"{'Match':38} {'Winner':16} {'Margin':>8} {'Line':>7} {'Total':>7} {'Win %':>7} {'Conf':>6}"
     typer.echo(header)
     typer.echo("-" * len(header))
-    for row in rows:
-        matchup = f"{row.home_team} v {row.away_team}"
+    for row in report.matches:
         typer.echo(
-            f"{matchup:38} {row.predicted_winner:16} {row.predicted_margin:8.1f} "
+            f"{matchup(row):38} {row.predicted_winner:16} {row.predicted_margin:8.1f} "
             f"{row.predicted_line:+7.1f} {row.predicted_total:7.1f} "
             f"{row.home_win_probability * 100:6.1f}% {row.confidence:5.1f}"
         )
+
+    typer.echo("\nHighest Confidence Bets:")
+    for row in report.highest_confidence:
+        typer.echo(f"  {matchup(row)} -> {row.predicted_winner} ({row.home_win_probability * 100:.0f}% win prob, confidence {row.confidence:.1f})")
+
+    typer.echo("\nBest Value Bets:")
+    if not report.best_value:
+        typer.echo("  None — no odds source connected yet, or no edge clears the configured threshold.")
+    else:
+        for row in report.best_value:
+            typer.echo(f"  {matchup(row)} -> {row.recommendation} @ {row.bookmaker} (edge {row.edge * 100:+.1f}%)")
+
+    typer.echo("\nGames To Avoid (low confidence / too close to call):")
+    if not report.games_to_avoid:
+        typer.echo("  None this round.")
+    else:
+        for row in report.games_to_avoid:
+            typer.echo(f"  {matchup(row)} (confidence {row.confidence:.1f})")
+
+    typer.echo("\nWhy:")
+    for row in report.matches:
+        typer.echo(f"  {matchup(row)}: {row.explanation}")
 
 
 @app.command()
@@ -350,6 +377,60 @@ def tune() -> None:
     typer.echo("\n=== HELD-OUT TEST seasons (never used for selection — the honest report) ===")
     t, tm = result.test_win_probability, result.test_margin
     typer.echo(f"n={t['n']:.0f} acc={t['accuracy']:.1%} brier={t['brier']:.4f} logloss={t['log_loss']:.4f} margin_MAE={tm['margin_mae']:.2f}")
+
+
+@app.command()
+def reconcile_predictions() -> None:
+    """Compares every stored prediction whose match has now been played
+    against the actual result, recording winner-correct/margin-error/
+    total-error/closing-line-diff (predictions_results table). This is
+    what lets the software "always know how accurate it has been" — run
+    it after each round completes.
+    """
+    from afl_model.reporting.reconcile import reconcile_predictions as _reconcile
+
+    summary = _reconcile()
+    typer.echo(
+        f"Checked {summary.predictions_checked} prediction(s): {summary.created} newly reconciled, "
+        f"{summary.updated} refreshed, {summary.with_closing_odds} with closing-line odds available."
+    )
+
+
+@app.command()
+def performance_report(
+    recent_n: int = typer.Option(20, "--recent", help="Number of most recent reconciled predictions for the 'recent form' figure"),
+) -> None:
+    """Reports how accurate this model has actually been, from every
+    reconciled prediction on record (run `reconcile-predictions` first to
+    pick up newly completed rounds) — never a backtest or a forecast.
+    """
+    from afl_model.reporting.performance_report import build_performance_report
+
+    report = build_performance_report(recent_n=recent_n)
+    if report.overall_n == 0:
+        typer.echo("No reconciled predictions yet — run `afl-model reconcile-predictions` after some rounds have been played.")
+        raise typer.Exit(code=0)
+
+    typer.echo(f"\n=== Overall (n={report.overall_n}, {report.overall_n_decisive} decisive) ===")
+    acc = f"{report.overall_win_accuracy:.1%}" if report.overall_win_accuracy is not None else "n/a"
+    typer.echo(f"Win accuracy: {acc}")
+    typer.echo(f"Margin MAE: {report.overall_margin_mae:.2f}" if report.overall_margin_mae is not None else "Margin MAE: n/a")
+    typer.echo(f"Total MAE: {report.overall_total_mae:.2f}" if report.overall_total_mae is not None else "Total MAE: n/a")
+    if report.n_with_closing_odds:
+        typer.echo(f"Mean closing-line diff (n={report.n_with_closing_odds}): {report.mean_closing_line_diff:+.2f}")
+    else:
+        typer.echo("Closing-line comparison: no odds connected yet.")
+
+    typer.echo(f"\n=== Recent form (last {report.recent_n}) ===")
+    recent_acc = f"{report.recent_win_accuracy:.1%}" if report.recent_win_accuracy is not None else "n/a"
+    typer.echo(f"Win accuracy: {recent_acc}")
+    typer.echo(f"Margin MAE: {report.recent_margin_mae:.2f}" if report.recent_margin_mae is not None else "Margin MAE: n/a")
+
+    typer.echo("\n=== By season ===")
+    for s in report.by_season:
+        acc = f"{s.win_accuracy:.1%}" if s.win_accuracy is not None else "n/a"
+        mae = f"{s.margin_mae:.2f}" if s.margin_mae is not None else "n/a"
+        typer.echo(f"{s.season_year}  n={s.n:4}  acc={acc:>6}  margin_MAE={mae}")
 
 
 if __name__ == "__main__":

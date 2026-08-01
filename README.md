@@ -85,6 +85,14 @@ computed ratings run; both are overridable with `--year` and `--model-version`. 
 prediction is persisted (`predictions` table), keyed on `(match_id, model_version_id)`,
 so re-running is idempotent rather than duplicating rows.
 
+The full output (`afl_model.reporting.round_report`) also groups matches into **Highest
+Confidence Bets**, **Best Value Bets** (empty until Stage 6 has a real odds source — never
+fabricated), and **Games To Avoid** (confidence below a fixed threshold — genuinely close
+calls, not a flaw), plus a plain-English **explanation for every match** built from the
+actual numbers behind that specific prediction. The explanation never cites form or rest
+as a reason while their prediction-config weights are 0 — doing so would misattribute the
+prediction to something that had no effect on it.
+
 Win probability combines Elo with form/rest/travel as Elo-equivalent adjustments; margin
 and total come from attack/defence ratings alone (situational adjustments don't extend
 to points-space yet — see `prediction:` in `config/config.yaml`). Confidence is built
@@ -98,6 +106,23 @@ Every rating and prediction-combination parameter (`elo.k_factor`, `home_ground_
 `form_elo_scale`, `rest_elo_scale_per_day`, `travel_elo_scale_per_100km`) is frozen from a
 systematic grid search (Stage 7, below), not hand-picked — see `config/config.yaml` for
 the reasoning and honest caveats behind each value.
+
+## Performance tracking
+
+```bash
+afl-model reconcile-predictions   # after a round has actually been played
+afl-model performance-report
+```
+
+Distinct from backtesting (a walk-forward *simulation* over history): this is the
+permanent record of what the model actually said, before the fact, compared against what
+actually happened — "the software should always know how accurate it has been." A
+prediction only ever enters this record once its match has genuinely been played and
+`reconcile-predictions` has run; nothing here is ever backfilled from hindsight. Reports
+overall and recent-form win accuracy, margin/total MAE, a season-by-season breakdown, and
+mean closing-line difference (once real odds exist). Right now this correctly reports
+"no reconciled predictions yet" — Round 22, the only round predicted under the current
+frozen config, genuinely hasn't been played yet.
 
 ## Hyperparameter tuning
 
@@ -229,7 +254,10 @@ of the SQLite database and the git repository itself.
    ROI-vs-closing-line and an evidence-based betting edge threshold remain explicitly
    blocked on Stage 6 getting a real odds source — cannot be determined without real
    odds, so this isn't attempted with placeholder data
-8. Performance tracking + reporting/CLI (`afl-model predict <round>`) *(current stage)*
-9. Automation (scheduled auto-update after each completed round)
+8. Performance tracking + reporting/CLI — `afl-model predict <round>` is the full
+   experience (table, highest-confidence, best-value, games-to-avoid, per-match
+   explanations); `afl_model.reporting.reconcile` + `afl-model performance-report` track
+   real accuracy over time, distinct from backtesting's historical simulation
+9. Automation (scheduled auto-update after each completed round) *(current stage)*
 10. Future extensions — player disposals, Brownlow modelling, Same Game Multi,
     live predictions, finals modelling
