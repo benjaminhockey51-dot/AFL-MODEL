@@ -166,7 +166,7 @@ def predict_match(
 
 
 def predict_round(
-    year: int, round_number: int, version_name: Optional[str] = None,
+    year: int, round_number: int, version_name: Optional[str] = None, skip_played: bool = False,
 ) -> List[RoundPredictionRow]:
     """Generate (and persist) predictions for every match in a round. Works
     for a round that hasn't been played yet (the normal case — predicting
@@ -176,15 +176,25 @@ def predict_round(
     been known at the time — that distinction matters for Stage 7's
     backtesting, which predicts from TeamRatingHistory's pre-match
     snapshots instead.
+
+    `skip_played`, when True, excludes matches that already have a result
+    from prediction generation entirely — for unattended automation, which
+    has no one to notice a hindsight-biased "prediction" for a game that's
+    already been played (see afl_model.automation.pipeline.run_auto_update).
+    Manual/CLI callers leave this False, preserving the spot-check use case
+    above.
     """
     session = get_session()
     try:
         model_version = get_model_version(session, version_name)
         prediction_config = load_prediction_config()
 
+        conditions = [Match.season_year == year, Match.round_number == round_number]
+        if skip_played:
+            conditions.append(Match.home_points.is_(None))
+
         matches = session.execute(
-            sa.select(Match).where(Match.season_year == year, Match.round_number == round_number)
-            .order_by(Match.match_date, Match.match_datetime)
+            sa.select(Match).where(*conditions).order_by(Match.match_date, Match.match_datetime)
         ).scalars().all()
         if not matches:
             raise ValueError(f"No matches found for {year} round {round_number}.")

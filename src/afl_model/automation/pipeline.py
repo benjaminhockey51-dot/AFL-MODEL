@@ -124,7 +124,9 @@ def run_auto_update(season_year: Optional[int] = None) -> AutoUpdateSummary:
     try:
         next_round = _find_next_unplayed_round(season_year)
         if next_round is not None:
-            rows = predict_round(season_year, next_round, version_name=summary.ratings_version_name)
+            rows = predict_round(
+                season_year, next_round, version_name=summary.ratings_version_name, skip_played=True,
+            )
             summary.predicted_round = next_round
             summary.predictions_generated = len(rows)
         else:

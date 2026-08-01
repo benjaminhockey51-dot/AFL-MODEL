@@ -7,7 +7,7 @@ import sqlalchemy as sa
 
 import afl_model.automation.pipeline as pipeline_module
 from afl_model.data import ingest_afltables, ingest_squiggle
-from afl_model.db.models import Match, ModelVersion, Season, Team
+from afl_model.db.models import Match, ModelVersion, Prediction, Season, Team
 from afl_model.ratings.engine import run_ratings_engine
 
 
@@ -153,6 +153,34 @@ def test_auto_update_predicts_the_next_unplayed_round(setup, monkeypatch):
 
     assert summary.predicted_round == 2
     assert summary.predictions_generated == 1
+
+
+def test_auto_update_skips_already_played_matches_in_a_mixed_round(setup, monkeypatch):
+    """Regression test for the live Round 21 incident: Squiggle's round
+    numbering drifted such that one round_number spanned both
+    already-played and genuinely-upcoming matches. Auto-update must never
+    generate a hindsight prediction for a match that already has a result,
+    no matter how it's grouped by round.
+    """
+    monkeypatch.setattr(ingest_squiggle, "ingest_season", _no_op_squiggle)
+    monkeypatch.setattr(ingest_afltables, "ingest_season", _no_op_afltables)
+
+    session, richmond, adelaide = setup
+    geelong = _make_team(session, "Geelong")
+    essendon = _make_team(session, "Essendon")
+    # Round 2 now has one already-played match alongside the existing
+    # unplayed one, simulating a round_number that spans two play-states.
+    played = _make_match(session, 2026, 2, geelong, essendon, home_pts=90, away_pts=70)
+    session.commit()
+
+    summary = pipeline_module.run_auto_update(2026)
+
+    assert summary.predicted_round == 2
+    assert summary.predictions_generated == 1  # only the genuinely unplayed match
+    prediction_for_played = session.execute(
+        sa.select(Prediction).where(Prediction.match_id == played.id)
+    ).scalar_one_or_none()
+    assert prediction_for_played is None
 
 
 def test_auto_update_isolates_a_failure_in_one_step(setup, monkeypatch):

@@ -38,12 +38,13 @@ def _make_current_rating(session, team, model_version, elo=1500.0, attack=0.0, d
     ))
 
 
-def _make_fixture(session, season_year, round_number, home, away, venue=None) -> Match:
+def _make_fixture(session, season_year, round_number, home, away, venue=None, home_pts=None, away_pts=None) -> Match:
     match = Match(
         created_by_source="squiggle", created_by_source_match_id="999",
         season_year=season_year, round_number=round_number, round_name=f"Round {round_number}",
         is_final=False, venue_id=venue.id if venue else None,
         match_date=date(season_year, 7, 1), home_team_id=home.id, away_team_id=away.id,
+        home_points=home_pts, away_points=away_pts,
     )
     session.add(match)
     session.flush()
@@ -149,3 +150,45 @@ def test_predict_round_falls_back_to_starting_rating_for_unrated_team(setup):
     # Should not crash, and Richmond (rated, in form) should still be favored
     # over a team resting entirely on starting values.
     assert rows[0].predicted_winner == "Richmond"
+
+
+def _make_mixed_round(session, richmond, adelaide, version):
+    """A round with one already-played match and one genuinely upcoming
+    match — the shape a round takes when a round_number spans two
+    play-states (e.g. the live Round 21 data anomaly this regression
+    guards against).
+    """
+    geelong = _make_team(session, "Geelong", "Geelong", -38.1499, 144.3617)
+    essendon = _make_team(session, "Essendon", "Melbourne", -37.7880, 144.9251)
+    for team in (geelong, essendon):
+        _make_current_rating(session, team, version, elo=1500.0, last_match_date=date(2026, 6, 20))
+    played = _make_fixture(session, 2026, 21, richmond, adelaide, home_pts=100, away_pts=80)
+    upcoming = _make_fixture(session, 2026, 21, geelong, essendon)
+    session.commit()
+    return played, upcoming
+
+
+def test_predict_round_skip_played_excludes_already_played_matches(setup):
+    session, richmond, adelaide, _, version = setup
+    played, upcoming = _make_mixed_round(session, richmond, adelaide, version)
+
+    rows = predict_round(2026, 21, version_name="test-version", skip_played=True)
+
+    assert [row.match_id for row in rows] == [upcoming.id]
+    prediction_for_played = session.execute(
+        sa.select(Prediction).where(Prediction.match_id == played.id, Prediction.model_version_id == version.id)
+    ).scalar_one_or_none()
+    assert prediction_for_played is None
+
+
+def test_predict_round_default_still_predicts_played_matches(setup):
+    """The manual/spot-check path (skip_played defaults to False) is
+    unchanged: a round mixing played and unplayed matches still gets
+    predictions for all of them, same as before skip_played existed.
+    """
+    session, richmond, adelaide, _, version = setup
+    played, upcoming = _make_mixed_round(session, richmond, adelaide, version)
+
+    rows = predict_round(2026, 21, version_name="test-version")
+
+    assert {row.match_id for row in rows} == {played.id, upcoming.id}
