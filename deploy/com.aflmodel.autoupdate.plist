@@ -14,18 +14,51 @@
     <key>WorkingDirectory</key>
     <string>/Users/benjaminhockey/Developer/AFL-Model</string>
 
-    <!-- Once daily at 08:00 local time. Deliberately not timed to exact
-         game-completion times — auto-update is cheap and idempotent on a
-         no-op day (ratings only re-run when a match actually completed
-         since the last run), so a simple daily schedule is more robust
-         than trying to predict when the last game of a round finishes. -->
+    <!-- Primarily 08:00 local time, with three backup triggers later the
+         same morning/early afternoon. Not timed to exact game-completion
+         times — auto-update is cheap and idempotent on a no-op day
+         (ratings only re-run when a match actually completed since the
+         last run), so a simple daily schedule is more robust than trying
+         to predict when the last game of a round finishes.
+
+         The backup triggers exist because a single daily fire has no
+         retry: if the machine is asleep at 08:00 (observed 2026-08-04 —
+         no log entry at all that day) or the run itself fails partway
+         (observed 2026-08-05 — a transient afltables.com read timeout),
+         nothing else happens until the next day. launchd doesn't retry a
+         missed or failed StartCalendarInterval on its own, and this job
+         has no KeepAlive, so a plain single trigger is a silent blind
+         spot rather than a self-healing one. Re-running is safe precisely
+         because the whole pipeline is idempotent — a backup run on a day
+         that already succeeded just confirms "no new data" in well under
+         a minute. -->
     <key>StartCalendarInterval</key>
-    <dict>
-        <key>Hour</key>
-        <integer>8</integer>
-        <key>Minute</key>
-        <integer>0</integer>
-    </dict>
+    <array>
+        <dict>
+            <key>Hour</key>
+            <integer>8</integer>
+            <key>Minute</key>
+            <integer>0</integer>
+        </dict>
+        <dict>
+            <key>Hour</key>
+            <integer>9</integer>
+            <key>Minute</key>
+            <integer>0</integer>
+        </dict>
+        <dict>
+            <key>Hour</key>
+            <integer>11</integer>
+            <key>Minute</key>
+            <integer>0</integer>
+        </dict>
+        <dict>
+            <key>Hour</key>
+            <integer>14</integer>
+            <key>Minute</key>
+            <integer>0</integer>
+        </dict>
+    </array>
 
     <key>StandardOutPath</key>
     <string>/Users/benjaminhockey/Developer/AFL-Model/logs/auto_update.stdout.log</string>
