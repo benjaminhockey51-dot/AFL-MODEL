@@ -64,3 +64,29 @@ def test_explain_mentions_travel_when_difference_is_large_and_scale_nonzero():
 def test_explain_handles_missing_travel_data_gracefully():
     text = explain_prediction(_inputs(home_travel_km=None, away_travel_km=None))
     assert "travelled" not in text
+
+
+def test_explain_does_not_attribute_disagreeing_margin_to_the_win_probability_winner():
+    """Regression for the real Brisbane-vs-Hawthorn case: win probability
+    favours the home team, but predicted_margin (independently computed
+    from attack/defence) favours the away team. The opening sentence must
+    not claim the home team is "favoured by" a margin number that actually
+    belongs to the away team.
+    """
+    text = explain_prediction(_inputs(
+        predicted_winner="home", home_win_probability=0.592, predicted_margin=-4.78,
+        home_elo=1500.0, away_elo=1505.0, home_attack=0.0, away_attack=4.78, home_defence=0.0, away_defence=0.0,
+    ))
+    assert "Richmond favoured to win" in text
+    assert "Richmond favoured by" not in text
+    assert "Adelaide Crows" in text.split("Attack/defence")[1]
+
+
+def test_explain_keeps_merged_sentence_when_margin_agrees_with_winner():
+    text = explain_prediction(_inputs(predicted_winner="home", predicted_margin=20.0))
+    assert "Richmond favoured by 20.0 points" in text
+
+
+def test_explain_keeps_merged_sentence_for_away_winner_with_agreeing_margin():
+    text = explain_prediction(_inputs(predicted_winner="away", home_win_probability=0.3, predicted_margin=-15.0))
+    assert "Adelaide Crows favoured by 15.0 points" in text

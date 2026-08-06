@@ -44,14 +44,34 @@ def explain_prediction(inputs: ExplanationInputs) -> str:
     prediction-config weights are 0 (see config.yaml) — citing them as a
     reason would misattribute the prediction to something that had no
     effect on it.
+
+    predicted_winner comes from win probability, not predicted_margin's
+    sign (see prediction_math.compute_prediction) — the two are
+    independently-fit signals allowed to disagree on which side they
+    favour. The opening sentence only states a margin figure when the two
+    agree; when they don't, it states the win pick alone and leaves the
+    margin figure to the attack/defence sentence below, which already
+    names its own (possibly different) side correctly — attributing
+    predicted_margin's number to the win-probability winner regardless of
+    its actual sign was a real bug here, not a style choice.
     """
     winner_name = inputs.home_team if inputs.predicted_winner == "home" else inputs.away_team
     win_pct = inputs.home_win_probability if inputs.predicted_winner == "home" else 1.0 - inputs.home_win_probability
 
-    sentences = [
-        f"{winner_name} favoured by {abs(inputs.predicted_margin):.1f} points "
-        f"({win_pct:.0%} win probability, {_confidence_label(inputs.confidence)})."
-    ]
+    margin_agrees_with_winner = (
+        (inputs.predicted_winner == "home" and inputs.predicted_margin >= 0)
+        or (inputs.predicted_winner == "away" and inputs.predicted_margin <= 0)
+    )
+    if margin_agrees_with_winner:
+        sentences = [
+            f"{winner_name} favoured by {abs(inputs.predicted_margin):.1f} points "
+            f"({win_pct:.0%} win probability, {_confidence_label(inputs.confidence)})."
+        ]
+    else:
+        sentences = [
+            f"{winner_name} favoured to win "
+            f"({win_pct:.0%} win probability, {_confidence_label(inputs.confidence)})."
+        ]
 
     elo_diff = inputs.home_elo - inputs.away_elo
     if abs(elo_diff) >= 1:
